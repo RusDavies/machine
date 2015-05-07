@@ -22,6 +22,7 @@ type GenericProvisioner struct {
 	AuthOptions       auth.AuthOptions
 	EngineOptions     engine.EngineOptions
 	SwarmOptions      swarm.SwarmOptions
+	SystemdEnabled	  bool
 }
 
 func (provisioner *GenericProvisioner) Hostname() (string, error) {

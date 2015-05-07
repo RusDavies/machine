@@ -380,7 +380,6 @@ func sshAvailableFunc(h *Host) func() bool {
 			log.Debugf("Error waiting for TCP waiting for SSH: %s", err)
 			return false
 		}
-
 		if _, err := h.RunSSHCommand("exit 0"); err != nil {
 			log.Debugf("Error getting ssh command 'exit 0' : %s", err)
 			return false
