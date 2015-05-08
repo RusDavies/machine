@@ -13,7 +13,6 @@ import (
 )
 
 type GenericProvisioner struct {
-	DockerOptsEnvVar  string
 	OsReleaseId       string
 	DockerOptionsDir  string
 	DaemonOptionsFile string
@@ -89,10 +88,11 @@ func (provisioner *GenericProvisioner) GenerateDockerOptions(dockerPort int) (*D
 	provisioner.EngineOptions.Labels = append(provisioner.EngineOptions.Labels, driverNameLabel)
 
 	engineConfigTmpl := `
-{{.DockerOptsEnvVar}}='
+DOCKER_OPTS='
 -H tcp://0.0.0.0:{{.DockerPort}}
 -H unix:///var/run/docker.sock
 --storage-driver {{.EngineOptions.StorageDriver}}
+--storage-driver-opt {{.EngineOptions.StorageDriverOpt}}
 --tlsverify
 --tlscacert {{.AuthOptions.CaCertRemotePath}}
 --tlscert {{.AuthOptions.ServerCertRemotePath}}
@@ -110,7 +110,6 @@ func (provisioner *GenericProvisioner) GenerateDockerOptions(dockerPort int) (*D
 	}
 
 	engineConfigContext := EngineConfigContext{
-		DockerOptsEnvVar:	provisioner.DockerOptsEnvVar,
 		DockerPort:    dockerPort,
 		AuthOptions:   provisioner.AuthOptions,
 		EngineOptions: provisioner.EngineOptions,

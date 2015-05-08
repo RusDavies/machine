@@ -190,6 +190,10 @@ var sharedCreateFlags = []cli.Flag{
 		Name:  "engine-storage-driver",
 		Usage: "Specify a storage driver to use with the engine",
 	},
+		cli.StringFlag{
+		Name:  "engine-storage-driver-opt",
+		Usage: "Specify options for the storage driver to use with the engine",
+	},
 	cli.BoolFlag{
 		Name:  "swarm",
 		Usage: "Configure Machine with Swarm",

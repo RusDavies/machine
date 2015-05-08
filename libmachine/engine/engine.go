@@ -9,6 +9,7 @@ type EngineOptions struct {
 	Labels           []string
 	LogLevel         string
 	StorageDriver    string
+	StorageDriverOpt string
 	SelinuxEnabled   bool
 	TlsCaCert        string
 	TlsCert          string

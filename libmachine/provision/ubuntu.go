@@ -23,7 +23,7 @@ func NewUbuntuProvisioner(d drivers.Driver) Provisioner {
 		GenericProvisioner{
 			DockerOptionsDir:  "/etc/docker",
 			DaemonOptionsFile: "/etc/default/docker",
-			DockerOptsEnvVar:  "DOCKER_OPTS",
+			//DockerOptsEnvVar:  "DOCKER_OPTS",
 			OsReleaseId:       "ubuntu",
 			Packages: []string{
 				"curl",
