@@ -13,6 +13,7 @@ import (
 )
 
 type GenericProvisioner struct {
+	DockerOptsEnvVar  string
 	OsReleaseId       string
 	DockerOptionsDir  string
 	DaemonOptionsFile string
@@ -22,7 +23,6 @@ type GenericProvisioner struct {
 	AuthOptions       auth.AuthOptions
 	EngineOptions     engine.EngineOptions
 	SwarmOptions      swarm.SwarmOptions
-	SystemdEnabled	  bool
 }
 
 func (provisioner *GenericProvisioner) Hostname() (string, error) {
@@ -89,7 +89,7 @@ func (provisioner *GenericProvisioner) GenerateDockerOptions(dockerPort int) (*D
 	provisioner.EngineOptions.Labels = append(provisioner.EngineOptions.Labels, driverNameLabel)
 
 	engineConfigTmpl := `
-DOCKER_OPTS='
+{{.DockerOptsEnvVar}}='
 -H tcp://0.0.0.0:{{.DockerPort}}
 -H unix:///var/run/docker.sock
 --storage-driver {{.EngineOptions.StorageDriver}}
@@ -110,6 +110,7 @@ DOCKER_OPTS='
 	}
 
 	engineConfigContext := EngineConfigContext{
+		DockerOptsEnvVar:	provisioner.DockerOptsEnvVar,
 		DockerPort:    dockerPort,
 		AuthOptions:   provisioner.AuthOptions,
 		EngineOptions: provisioner.EngineOptions,

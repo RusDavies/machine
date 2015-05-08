@@ -10,7 +10,6 @@ import (
 	"github.com/docker/machine/libmachine/provision/pkgaction"
 	"github.com/docker/machine/libmachine/swarm"
 	"github.com/docker/machine/ssh"
-	"github.com/docker/machine/log"
 
 )
 
@@ -93,7 +92,6 @@ func DetectProvisioner(d drivers.Driver) (Provisioner, error) {
 		provisioner.SetOsReleaseInfo(osReleaseInfo)
 
 		if provisioner.CompatibleWithHost() {
-	 		log.Debugf("DEBUG: Found a compatible provisioner")
 			return provisioner, nil
 		}
 		

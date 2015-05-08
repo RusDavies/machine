@@ -1,3 +1,72 @@
+// Notes:
+// 1. The following is an attempt to add provisioning code to support Fedora images.
+//    It's mostly a copy of the ubuntu.go code.  As such, it's not very DRY, and
+//    improvements could be acheived with a more considered approach. 
+//
+// 2. Since Fedora 15, systemd has replaced sysvinit by default.  At the time of 
+//    writing, the current version of Fedora is 21, and there's still some proxying
+//    behaviour between the 'service' and 'systemctl' commands.  However, we 
+//    can't always rely on this being the case, so it's better to set things 
+//    straight from the get go.  We should use systemd if available.  The check
+//    is performed by the FedoraProvisioner.SystemdCheck() method, with the state
+//	  being stored as a bool in FedoraProvisioner.SystemdEnabled
+//
+//    It's worth noting that recent versions of other major distributions are 
+//    also using systemd by default [*]. Therefore, it may be relevant 
+//    to instead attach the SystemdCheck() method and SystemdEnabled field to 
+//    the GenericProvisioner.
+//    [*] http://en.wikipedia.org/wiki/Systemd#Adoption_and_reception
+//
+// 3. By default, Fedora does not enable IP packet forwarding, which is needed
+//    for containers to be routable to/from the outside world. To enable forwarding,
+//    one must execute:
+//       sudo sysctl -w net.ipv4.ip_forward=1
+//
+//    To make this change persistent between reboots, one should execute:
+//       sudo sh -c 'echo net.ipv4.ip_forward = 1 >> /etc/sysctl.d/80-docker.conf'
+//
+//    The purpose of the new FedoraProvisioner.EnableIpForwarding() method is to
+//    perform both commands.
+//
+// 
+// 4. Fedora has the docker-io package available.  Therefore, one may make use of 
+//    that, by including docker in the package list.  One can then skip the 
+//    installDockerGeneric() step in FedoraProvisioner.Provision(...)
+//
+//
+// 5. In Fedora, the systemd service script for docker is located at /usr/lib/systemd/system
+//    It loads the following three files:
+//        /etc/sysconfig/docker
+//        /etc/sysconfig/docker-storage
+//        /etc/sysconfig/docker-network
+//
+//    From those three files, the service script makes use of four environment
+//    variables: 
+//        OPTIONS
+//        DOCKER_STORAGE_OPTIONS
+//        DOCKER_NETWORK_OPTIONS 
+//        INSECURE_REGISTRY
+//
+//    The docker service is launched as:
+//       /usr/bin/docker -d $OPTIONS \
+//                          $DOCKER_STORAGE_OPTIONS \
+//                          $DOCKER_NETWORK_OPTIONS \
+//  						$INSECURE_REGISTRY
+//    
+//    Given the way the environment variables are used, then it's possible 
+//    to dump all options into just one of the environment variables (e.g. OPTIONS).
+//    (However, this is not consistent with the seperation of concerns that Fedora 
+//    appears to be attempting - kind of a shame to barf all over someone's nice
+//    clean work ;o)  )
+//
+//    None of the environment variables used by the fedora service script match the 
+//    the DOCKER_OPTS that, to date, has been written out by 
+//    GenericProvisioner.GenerateDockerOptions() in generic.go.  To provide greater 
+//    flexibility, that environment variable name has been parameterized in the 
+//    template, configurable via GenericProvisioner.DockerOptsEnvVar.  The 
+//    UbuntuProvisioner in ubuntu.go has been updated to include the origin 
+//    value of "DOCKER_OPTS", which should allow it to work as per normal.
+//  
 package provision
 
 import (
@@ -13,45 +82,49 @@ import (
 	"github.com/docker/machine/utils"
 )
 
-func init() {
-	Register("Fedora", &RegisteredProvisioner{
-		New: NewFedoraProvisioner,
-	})
+type FedoraProvisionerExt struct {
+    SystemdEnabled 		bool
+}
+
+type FedoraProvisioner struct {
+	GenericProvisioner
+	FedoraProvisionerExt
 }
 
 func NewFedoraProvisioner(d drivers.Driver) Provisioner {
 	return &FedoraProvisioner{
 		GenericProvisioner{
 			DockerOptionsDir:  "/etc/docker",
-			DaemonOptionsFile: "/etc/default/docker",
+			DaemonOptionsFile: "/etc/sysconfig/docker",
+			DockerOptsEnvVar:  "OPTIONS",
 			OsReleaseId:       "fedora",
 			Packages: []string{
-				"curl",
+				"curl",       
+				"docker",
 			},
 			Driver: d,
-			SystemdEnabled: true,
 		},
+   		FedoraProvisionerExt{
+			SystemdEnabled: true,
+			},
 	}
 }
 
-type FedoraProvisioner struct {
-	GenericProvisioner
+func init() {
+	Register("Fedora", &RegisteredProvisioner{
+		New: NewFedoraProvisioner,
+	})
 }
 
 func (provisioner *FedoraProvisioner) SystemdCheck() error {
-	// Fedora 15 onwards replaced sysvinit w/ systemd.  As of Fedora 21, 
-	// the /sbin/service command still proxies to /bin/systemctl. However, 
-	// this may change in the future, so let's avoid that foreseeable issue. 
-
-	// This command detects whether /sbin/init is running.  If it is, then the
-	// host is using sysvinit; otherwise, it's using systemd
+	// See note 1 at head of document.
 	var (
 		command 	string
 		reader		bytes.Buffer
 	)
 
+	// Command to test for sysvint or systemd on Fedora
 	command = "pidof /sbin/init &>/dev/null && echo sysvinit || echo systemd" 
-
 	response, err := provisioner.SSHCommand(command)
 	if err != nil {
 		return err
@@ -62,9 +135,6 @@ func (provisioner *FedoraProvisioner) SystemdCheck() error {
 	}
 	
 	result := reader.String()
-	
-	fmt.Sprintf("DEBUG: response from pidof: ", result)
-	
 	if result == "systemd" {
 		provisioner.SystemdEnabled = true
 	} else {
@@ -74,8 +144,29 @@ func (provisioner *FedoraProvisioner) SystemdCheck() error {
 	return nil
 }
 
+func (provisioner *FedoraProvisioner) EnableIpForwarding() error {
+	var command string
+	
+	// Command to enable IP forwarding 
+	command = "sudo sysctl -w net.ipv4.ip_forward=1"
+	if _, err := provisioner.SSHCommand(command); err != nil {
+		log.Debug("Failed to run SSH command to enable ip forwarding to docker containers")
+		return err
+	}
+	
+	// Command to persist enablement of IP forwarding between boots
+	command = "sudo sh -c 'echo net.ipv4.ip_forward = 1 >> /etc/sysctl.d/80-docker.conf'"
+	if _, err := provisioner.SSHCommand(command); err != nil {
+		log.Debug("Failed to run SSH command to make ip forwarding to docker containers permanent")
+		return err
+	}
+	
+	return nil
+}
+
 func (provisioner *FedoraProvisioner) Service(name string, action pkgaction.ServiceAction) error {
 	var command string; 
+	log.Debugf("DEBUG: FedoraProvisioner.Service() - called")
 
 	// The command varies depending on whether the host is using sysvinit or systemd
 	if provisioner.SystemdEnabled {
@@ -84,9 +175,11 @@ func (provisioner *FedoraProvisioner) Service(name string, action pkgaction.Serv
 		command = fmt.Sprintf("sudo service %s %s", name, action.String()) // SysVinit method
 	}	
 
+	log.Debugf(fmt.Sprintf("DEBUG: FedoraProvisioner.Service() - about to run: %s", command) )
 	if _, err := provisioner.SSHCommand(command); err != nil {
 		return err
 	}
+	log.Debugf("DEBUG: Service() - OK")
 
 	return nil
 }
@@ -100,7 +193,7 @@ func (provisioner *FedoraProvisioner) Package(name string, action pkgaction.Pack
 	case pkgaction.Remove:
 		packageAction = "remove"
 	case pkgaction.Upgrade:
-		packageAction = "update" // TODO: Should this be update or upgrade? What's the intended effect?
+		packageAction = "update" // TODO: Check that apt-get upgrade => yum update
 	}
 
 	// TODO: This should probably have a const
@@ -129,7 +222,6 @@ func (provisioner *FedoraProvisioner) dockerDaemonResponding() bool {
 }
 
 func (provisioner *FedoraProvisioner) Provision(swarmOptions swarm.SwarmOptions, authOptions auth.AuthOptions, engineOptions engine.EngineOptions) error {
-	log.Debugf("DEBUG: Using the FedoraProvisioner")
 	provisioner.SwarmOptions = swarmOptions
 	provisioner.AuthOptions = authOptions
 	provisioner.EngineOptions = engineOptions
@@ -138,47 +230,48 @@ func (provisioner *FedoraProvisioner) Provision(swarmOptions swarm.SwarmOptions,
 		provisioner.EngineOptions.StorageDriver = "aufs"
 	}
 
-	log.Debugf("DEBUG: Provision() - About to call SetHostname()")
 	if err := provisioner.SetHostname(provisioner.Driver.GetMachineName()); err != nil {
 		return err
 	}
 
-	log.Debugf("DEBUG: Provision() - About to do systemd check")
+	if err := provisioner.EnableIpForwarding(); err != nil {
+		return err
+	}
+
 	if err := provisioner.SystemdCheck(); err != nil {
 		return err
 	}
 
-	log.Debugf("DEBUG: Provision() - About to install packages")
 	for _, pkg := range provisioner.Packages {
 		if err := provisioner.Package(pkg, pkgaction.Install); err != nil {
 			return err
 		}
 	}
 
-	log.Debugf("DEBUG: Provision() - About to run installDockerGeneric(...) ")
-	if err := installDockerGeneric(provisioner); err != nil {
+	// Not necassary (TBC) since Fedora gets docker from package list.  
+	//if err := installDockerGeneric(provisioner); err != nil {
+	//	return err
+	//}
+	
+	// Docker has to be started for the subsequent test to work
+	if err := provisioner.Service("docker", pkgaction.Restart); err != nil {
 		return err
 	}
-
-	log.Debugf("DEBUG: Provision() - Waiting for docker daemon to respond ")
+		
 	if err := utils.WaitFor(provisioner.dockerDaemonResponding); err != nil {
 		return err
 	}
 
-	log.Debugf("DEBUG: Provision() - Abut to create the Docker options directory ")
 	if err := makeDockerOptionsDir(provisioner); err != nil {
 		return err
 	}
 
-	log.Debugf("DEBUG: Provision() - About to call remoteAuthOptions(...) ")
 	provisioner.AuthOptions = setRemoteAuthOptions(provisioner)
 
-	log.Debugf("DEBUG: Provision() - About to call ConfigureAuth(...) ")
 	if err := ConfigureAuth(provisioner); err != nil {
 		return err
 	}
 
-	log.Debugf("DEBUG: Provision() - About to call configureSwarm(...) ")
 	if err := configureSwarm(provisioner, swarmOptions); err != nil {
 		return err
 	}

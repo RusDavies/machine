@@ -6,7 +6,8 @@ import (
 )
 
 type EngineConfigContext struct {
-	DockerPort    int
-	AuthOptions   auth.AuthOptions
-	EngineOptions engine.EngineOptions
+	DockerOptsEnvVar	string
+	DockerPort    		int
+	AuthOptions   		auth.AuthOptions
+	EngineOptions 		engine.EngineOptions
 }
