@@ -160,23 +160,32 @@ func ConfigureAuth(p Provisioner) error {
 		dockerPort = dPort
 	}
 
+	log.Debug("ConfigureAuth() -- about to call p.GenerateDockerOptions()")
 	dkrcfg, err := p.GenerateDockerOptions(dockerPort)
 	if err != nil {
 		return err
 	}
+	log.Debug("ConfigureAuth() -- finished calling p.GenerateDockerOptions()")
 
-	if _, err = p.SSHCommand(fmt.Sprintf("echo \"%s\" | sudo tee -a %s", dkrcfg.EngineOptions, dkrcfg.EngineOptionsPath)); err != nil {
+	command := fmt.Sprintf("echo \"%s\" | sudo tee -a %s", dkrcfg.EngineOptions, dkrcfg.EngineOptionsPath)
+	log.Debug(fmt.Sprintf("ConfigureAuth() -- about to run command: %s", command))
+	if _, err = p.SSHCommand(command); err != nil {
 		return err
 	}
 
+	// TODO: Do not hardcode service name, ask the driver
+	log.Debug("ConfigureAuth() -- about start docker")
 	if err := p.Service("docker", pkgaction.Start); err != nil {
 		return err
 	}
+	log.Debug("ConfigureAuth() -- finished starting docker")
 
 	// TODO: Do not hardcode daemon port, ask the driver
+	log.Debug("ConfigureAuth() -- about to wait for docker to be up")
 	if err := utils.WaitForDocker(ip, dockerPort); err != nil {
 		return err
 	}
+	log.Debug("ConfigureAuth() -- finished waiting for docker to be up")
 
 	return nil
 }

@@ -19,11 +19,11 @@ func init() {
 }
 
 func NewUbuntuProvisioner(d drivers.Driver) Provisioner {
+	 
 	return &UbuntuProvisioner{
 		GenericProvisioner{
 			DockerOptionsDir:  "/etc/docker",
 			DaemonOptionsFile: "/etc/default/docker",
-			//DockerOptsEnvVar:  "DOCKER_OPTS",
 			OsReleaseId:       "ubuntu",
 			Packages: []string{
 				"curl",

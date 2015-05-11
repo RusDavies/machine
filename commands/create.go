@@ -74,7 +74,6 @@ func cmdCreate(c *cli.Context) {
 			Labels:           c.StringSlice("engine-label"),
 			RegistryMirror:   c.StringSlice("engine-registry-mirror"),
 			StorageDriver:    c.String("engine-storage-driver"),
-			StorageDriverOpt: c.String("engine-storage-driver-opt"),
 			TlsVerify:        true,
 		},
 		SwarmOptions: &swarm.SwarmOptions{
