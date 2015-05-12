@@ -68,10 +68,10 @@ func (provisioner *RedhatFamilyProvisioner) Service(name string, action pkgactio
 	} else {
 		switch action.String(){
 			case "enable":
-				command = fmt.Sprintf("sudo chkconfig --del %s", name)
+				command = fmt.Sprintf("sudo chkconfig --add %s", name)
 				break;
 			case "disable":
-				command = fmt.Sprintf("sudo chkconfig --add %s", name)
+				command = fmt.Sprintf("sudo chkconfig --del %s", name)
 				break;
 			case "start", "stop", "restart":
 				command = fmt.Sprintf("sudo service %s %s", name, action.String())
