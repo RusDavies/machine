@@ -52,7 +52,7 @@ type RedHatProvisioner struct {
 
 
 /* iRedhatFamilyProvisioner interface -- overrides */
-func (provisioner *RedHatProvisioner) PrePrevisionHook() error {
+func (provisioner *RedHatProvisioner) PreProvisionHook() error {
 	// setup extras repo
 	if err := provisioner.configureRepos(); err != nil {
 		return err
@@ -60,7 +60,7 @@ func (provisioner *RedHatProvisioner) PrePrevisionHook() error {
 	return nil
 }
 
-func (provisioner *RedHatProvisioner) PostPrevisionHook() error {
+func (provisioner *RedHatProvisioner) PostProvisionHook() error {
 	// TODO: Not sure why we do this, given docker is installed from
 	// packages by InstallDocker(), but it was in the redhat-provisioning 
 	// branch of https://github.com/ehazlett/machine.git

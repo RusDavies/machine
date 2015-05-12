@@ -16,8 +16,8 @@ import (
 
 type iRedhatFamilyProvisioner interface {
 	// Useful process hooks
-	PrePrevisionHook() error
-	PostPrevisionHook() error
+	PreProvisionHook() error
+	PostProvisionHook() error
 	PreGenerateDockerOptionsHook() error
 	PostGenerateDockerOptionsHook() error
 	//
@@ -40,11 +40,11 @@ type RedhatFamilyProvisioner struct {
 
 /* iRedhatFamilyProvisioner interface implementation */
 
-func (provisioner *RedhatFamilyProvisioner) PrePrevisionHook() error {
+func (provisioner *RedhatFamilyProvisioner) PreProvisionHook() error {
 	return nil
 }
 
-func (provisioner *RedhatFamilyProvisioner) PostPrevisionHook() error {
+func (provisioner *RedhatFamilyProvisioner) PostProvisionHook() error {
 	return nil
 }
 
@@ -120,7 +120,7 @@ func (provisioner *RedhatFamilyProvisioner) dockerDaemonResponding() bool {
 
 func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOptions, authOptions auth.AuthOptions, engineOptions engine.EngineOptions) error {
 	if provisioner.rhpi != nil {
-		if err := provisioner.rhpi.PrePrevisionHook(); err != nil {
+		if err := provisioner.rhpi.PreProvisionHook(); err != nil {
 			log.Debug("Pre-prevision tasks failed.")
 			return err
 		}
@@ -181,7 +181,7 @@ func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOp
 	}
 	
 	if provisioner.rhpi != nil {
-		if err := provisioner.rhpi.PostPrevisionHook(); err != nil {
+		if err := provisioner.rhpi.PostProvisionHook(); err != nil {
 			log.Debug("Post-prevision tasks failed.")
 			return err
 		}
