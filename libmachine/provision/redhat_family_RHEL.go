@@ -17,11 +17,11 @@ const (
 
 func init() {
 	Register("RedHat", &RegisteredProvisioner{
-		New: NewRedHatProvisioner,
+		New: NewRhelProvisioner,
 	})
 }
 
-func NewRedHatProvisioner(d drivers.Driver) Provisioner {
+func NewRhelProvisioner(d drivers.Driver) Provisioner {
 	rp := RhelProvisioner{
 		RedhatFamilyProvisioner{
 			GenericProvisioner{
