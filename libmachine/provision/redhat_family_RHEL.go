@@ -22,7 +22,7 @@ func init() {
 }
 
 func NewRedHatProvisioner(d drivers.Driver) Provisioner {
-	rp := RedHatProvisioner{
+	rp := RhelProvisioner{
 		RedhatFamilyProvisioner{
 			GenericProvisioner{
 				DockerOptionsDir:  "/etc/docker",
@@ -35,7 +35,7 @@ func NewRedHatProvisioner(d drivers.Driver) Provisioner {
 			},
 			RedhatFamilyProvisionerExt{
 			    SystemdEnabled: 	true,
-				DockerPackageName:  "docker-io",
+				DockerPackageName:  "docker",
 				DockerServiceName:  "docker",
 				DockerSysctlFile:   "/etc/sysctl.d/80-docker.conf",
 				rhpi: nil,
@@ -46,13 +46,13 @@ func NewRedHatProvisioner(d drivers.Driver) Provisioner {
 	return &rp
 }
 
-type RedHatProvisioner struct {
+type RhelProvisioner struct {
 	RedhatFamilyProvisioner
 }
 
 
 /* iRedhatFamilyProvisioner interface -- overrides */
-func (provisioner *RedHatProvisioner) PreProvisionHook() error {
+func (provisioner *RhelProvisioner) PreProvisionHook() error {
 	// setup extras repo
 	if err := provisioner.configureRepos(); err != nil {
 		return err
@@ -60,7 +60,7 @@ func (provisioner *RedHatProvisioner) PreProvisionHook() error {
 	return nil
 }
 
-func (provisioner *RedHatProvisioner) PostProvisionHook() error {
+func (provisioner *RhelProvisioner) PostProvisionHook() error {
 	// TODO: Not sure why we do this, given docker is installed from
 	// packages by InstallDocker(), but it was in the redhat-provisioning 
 	// branch of https://github.com/ehazlett/machine.git
@@ -78,7 +78,7 @@ func (provisioner *RedHatProvisioner) PostProvisionHook() error {
 
 
 /* Methods that are unique to Redhat */
-func (provisioner *RedHatProvisioner) isAWS() bool {
+func (provisioner *RhelProvisioner) isAWS() bool {
 	if _, err := provisioner.SSHCommand("curl -s http://169.254.169.254/latest/meta-data/ami-id"); err != nil {
 		return false
 	}
@@ -86,7 +86,7 @@ func (provisioner *RedHatProvisioner) isAWS() bool {
 	return true
 }
 
-func (provisioner *RedHatProvisioner) configureRepos() error {
+func (provisioner *RhelProvisioner) configureRepos() error {
 
 	// TODO: should this be handled differently? on aws we need to enable
 	// the extras repo different than a standalone rhel box
@@ -104,7 +104,7 @@ func (provisioner *RedHatProvisioner) configureRepos() error {
 	return nil
 }
 
-func (provisioner *RedHatProvisioner) installOfficialDocker() error {
+func (provisioner *RhelProvisioner) installOfficialDocker() error {
 	log.Debug("installing official Docker binary")
 
 	if err := provisioner.Service("docker", pkgaction.Stop); err != nil {
