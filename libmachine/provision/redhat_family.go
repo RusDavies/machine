@@ -121,7 +121,7 @@ func (provisioner *RedhatFamilyProvisioner) dockerDaemonResponding() bool {
 func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOptions, authOptions auth.AuthOptions, engineOptions engine.EngineOptions) error {
 	if provisioner.rhpi != nil {
 		if err := provisioner.rhpi.PreProvisionHook(); err != nil {
-			log.Debug("Pre-prevision tasks failed.")
+			log.Debug("Pre-provision tasks failed.")
 			return err
 		}
 	}
@@ -182,7 +182,7 @@ func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOp
 	
 	if provisioner.rhpi != nil {
 		if err := provisioner.rhpi.PostProvisionHook(); err != nil {
-			log.Debug("Post-prevision tasks failed.")
+			log.Debug("Post-provision tasks failed.")
 			return err
 		}
 	}
