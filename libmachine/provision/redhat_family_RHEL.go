@@ -4,15 +4,14 @@ import (
 	"fmt"
 
 	"github.com/docker/machine/drivers"
-	"github.com/docker/machine/libmachine/provision/pkgaction"
 	"github.com/docker/machine/log"
-	
 )
 
 const (
-	// these are the custom dyn builds
-	dockerURL     = "https://docker-mcn.s3.amazonaws.com/public/redhat/1.6.0/dynbinary/docker-1.6.0"
-	dockerinitURL = "https://docker-mcn.s3.amazonaws.com/public/redhat/1.6.0/dynbinary/dockerinit-1.6.0"
+	// TODO: eventually the RPM install process will be integrated
+	// into the get.docker.com install script; for now
+	// we install via vendored RPMs
+	dockerRHELRPMPath = "https://docker-mcn.s3.amazonaws.com/public/redhat/rpms/docker-engine-1.6.1-0.0.20150511.171646.git1b47f9f.el7.centos.x86_64.rpm"
 )
 
 func init() {
@@ -22,28 +21,29 @@ func init() {
 }
 
 func NewRhelProvisioner(d drivers.Driver) Provisioner {
-	rp := RhelProvisioner{
+	g := GenericProvisioner{
+			DockerOptionsDir:  "/etc/docker",
+			DaemonOptionsFile: "/lib/systemd/system/docker.service",
+			OsReleaseId:       "rhel",
+			Packages: []string{
+				"curl",
+			},
+			Driver: d,
+		}
+	rfe := RedhatFamilyProvisionerExt{
+			DockerRPMPath:		dockerRHELRPMPath,
+			rhpi: 				nil,
+		}
+	p := RhelProvisioner{
 		RedhatFamilyProvisioner{
-			GenericProvisioner{
-				DockerOptionsDir:  "/etc/docker",
-				DaemonOptionsFile: "/etc/sysconfig/docker",
-				OsReleaseId:       "rhel",
-				Packages: []string{
-					"curl",
-				},
-				Driver: d,
-			},
-			RedhatFamilyProvisionerExt{
-			    SystemdEnabled: 	true,
-				DockerPackageName:  "docker",
-				DockerServiceName:  "docker",
-				DockerSysctlFile:   "/etc/sysctl.d/80-docker.conf",
-				rhpi: nil,
-			},
+			g,
+			rfe,
 		},
 	}
-	rp.rhpi = &rp // Point the rhpi interface to ourself
-	return &rp
+	
+	p.rhpi = &p // Point the rhpi interface the RhelProvisioner
+	
+	return &p
 }
 
 type RhelProvisioner struct {
@@ -60,24 +60,8 @@ func (provisioner *RhelProvisioner) PreProvisionHook() error {
 	return nil
 }
 
-func (provisioner *RhelProvisioner) PostProvisionHook() error {
-	// TODO: Not sure why we do this, given docker is installed from
-	// packages by InstallDocker(), but it was in the redhat-provisioning 
-	// branch of https://github.com/ehazlett/machine.git
-	// Is it more of a general use case, or a personal one? 
-	if err := provisioner.installOfficialDocker(); err != nil {
-		return err
-	}
-	return nil
-}
 
-
-/* Provision interface */
-// Nothing to do! Everything unique to RedHat is handled in the 
-// iRedhatFamilyProvisioner hooks above.  Yay. 
-
-
-/* Methods that are unique to Redhat */
+/* Methods that are unique to RHEL */
 func (provisioner *RhelProvisioner) isAWS() bool {
 	if _, err := provisioner.SSHCommand("curl -s http://169.254.169.254/latest/meta-data/ami-id"); err != nil {
 		return false
@@ -87,10 +71,6 @@ func (provisioner *RhelProvisioner) isAWS() bool {
 }
 
 func (provisioner *RhelProvisioner) configureRepos() error {
-
-	// TODO: should this be handled differently? on aws we need to enable
-	// the extras repo different than a standalone rhel box
-
 	log.Debug("configuring extra repo")
 	repoCmd := "subscription-manager repos --enable=rhel-7-server-extras-rpms"
 	if provisioner.isAWS() {
@@ -98,29 +78,6 @@ func (provisioner *RhelProvisioner) configureRepos() error {
 	}
 
 	if _, err := provisioner.SSHCommand(fmt.Sprintf("sudo %s", repoCmd)); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (provisioner *RhelProvisioner) installOfficialDocker() error {
-	log.Debug("installing official Docker binary")
-
-	if err := provisioner.Service("docker", pkgaction.Stop); err != nil {
-		return err
-	}
-
-	// TODO: replace with Docker RPMs when they are ready
-	if _, err := provisioner.SSHCommand(fmt.Sprintf("sudo -E curl -o /usr/bin/docker %s", dockerURL)); err != nil {
-		return err
-	}
-
-	if _, err := provisioner.SSHCommand(fmt.Sprintf("sudo -E curl -o /usr/libexec/docker/dockerinit %s", dockerinitURL)); err != nil {
-		return err
-	}
-
-	if err := provisioner.Service("docker", pkgaction.Restart); err != nil {
 		return err
 	}
 

@@ -4,6 +4,13 @@ import (
 	"github.com/docker/machine/drivers"
 )
 
+const (
+	// TODO: eventually the RPM install process will be integrated
+	// into the get.docker.com install script; for now
+	// we install via vendored RPMs
+	dockerFedoraRPMPath = "https://docker-mcn.s3.amazonaws.com/public/fedora/rpms/docker-engine-1.6.1-0.0.20150511.171646.git1b47f9f.fc21.x86_64.rpm"
+)
+
 func init() {
 	Register("Fedora", &RegisteredProvisioner{
 		New: NewFedoraProvisioner,
@@ -11,42 +18,32 @@ func init() {
 }
 
 func NewFedoraProvisioner(d drivers.Driver) Provisioner {
-	fp := FedoraProvisioner{
+	g := GenericProvisioner {
+			DockerOptionsDir:  "/etc/docker",
+			DaemonOptionsFile: "/lib/systemd/system/docker.service",
+			OsReleaseId:       "fedora",
+			Packages: []string{
+				"curl",
+				"yum-utils",
+			},
+			Driver: d,
+		}
+	re := RedhatFamilyProvisionerExt{
+			DockerRPMPath: dockerFedoraRPMPath,
+			rhpi: nil,
+		}
+	p := FedoraProvisioner{
 		RedhatFamilyProvisioner{
-			GenericProvisioner {
-				DockerOptionsDir:  "/etc/docker",
-				DaemonOptionsFile: "/etc/sysconfig/docker",
-				OsReleaseId:       "fedora",
-				Packages: []string{
-					"curl",
-				},
-				Driver: d,
-			},
-			RedhatFamilyProvisionerExt{
-			    SystemdEnabled: 	true,
-				DockerPackageName:  "docker-io",
-				DockerServiceName:  "docker",
-				DockerSysctlFile:   "/etc/sysctl.d/80-docker.conf",
-				rhpi: nil,
-			},
-
+			g,
+			re,
 		},
 	}
-	fp.rhpi = &fp  // Point the rhpi interface to ourself
-	return &fp
+	
+	p.rhpi = &p  // Point the rhpi interface to the FedoraProvisioner
+	
+	return &p
 }
 
 type FedoraProvisioner struct {
 	RedhatFamilyProvisioner
 }
-
-
-/* iRedhatFamilyProvisioner interface -- overrides */
-// Nothing (yet). 
-
-/* Provision interface implementation */ 
-// Nothing (yet).  
-
-/* Methods that are unique to Fedora */
-// Nothing (yet).
-

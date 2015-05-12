@@ -3,7 +3,6 @@ package provision
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"text/template"
 
 	"github.com/docker/machine/libmachine/auth"
@@ -15,22 +14,14 @@ import (
 )
 
 type iRedhatFamilyProvisioner interface {
-	// Useful process hooks
+	// Useful process hooks that embedding structures can override
 	PreProvisionHook() error
 	PostProvisionHook() error
-	PreGenerateDockerOptionsHook() error
-	PostGenerateDockerOptionsHook() error
-	//
-	// Stuff that derived provisioners may want to override
-	// Nothing (yet)
 }
 
 type RedhatFamilyProvisionerExt struct {
-    SystemdEnabled 		bool
-	DockerSysctlFile    string
-	DockerPackageName   string
-	DockerServiceName   string
-	rhpi 				iRedhatFamilyProvisioner
+	DockerRPMPath 	string
+	rhpi 			iRedhatFamilyProvisioner
 }
 
 type RedhatFamilyProvisioner struct {
@@ -48,39 +39,29 @@ func (provisioner *RedhatFamilyProvisioner) PostProvisionHook() error {
 	return nil
 }
 
-func (provisioner *RedhatFamilyProvisioner) PreGenerateDockerOptionsHook() error {
-	return nil
-}
-
-func (provisioner *RedhatFamilyProvisioner) PostGenerateDockerOptionsHook() error {
-	return nil
-}
-
 
 /* Provision interface implementation */ 
 
 func (provisioner *RedhatFamilyProvisioner) Service(name string, action pkgaction.ServiceAction) error {
-	var command string; 
-    
-	// The command varies depending on whether the host is using sysvinit or systemd
-	if provisioner.SystemdEnabled {
-		command = fmt.Sprintf("sudo systemctl %s %s", action.String(), name)
-	} else {
-		switch action.String(){
-			case "enable":
-				command = fmt.Sprintf("sudo chkconfig --add %s", name)
-				break;
-			case "disable":
-				command = fmt.Sprintf("sudo chkconfig --del %s", name)
-				break;
-			case "start", "stop", "restart":
-				command = fmt.Sprintf("sudo service %s %s", name, action.String())
-				break;
+	
+	reloadDaemon := false
+	switch action {
+		case pkgaction.Start, pkgaction.Restart:
+			reloadDaemon = true
+	}
+	
+	// systemd needs reloaded when config changes on disk; we cannot
+	// be sure exactly when it changes from the provisioner so
+	// we call a reload on every restart to be safe
+	if reloadDaemon {
+		if _, err := provisioner.SSHCommand("sudo systemctl daemon-reload"); err != nil {
+			return err
 		}
-	}	
+	}
+	
+	command := fmt.Sprintf("sudo systemctl %s %s", action.String(), name)
 
 	if _, err := provisioner.SSHCommand(command); err != nil {
-		log.Debug(fmt.Sprintf("RedhatFamilyProvisioner.Service() -- command returned an error: %s", err))
 		return err
 	}
 
@@ -96,10 +77,10 @@ func (provisioner *RedhatFamilyProvisioner) Package(name string, action pkgactio
 	case pkgaction.Remove:
 		packageAction = "remove"
 	case pkgaction.Upgrade:
-		packageAction = "update" // TODO: Check that apt-get upgrade => yum update
+		packageAction = "update" // TODO: Check that apt-get upgrade ~ yum update
 	}
 
-	command := fmt.Sprintf("sudo yum -y %s %s", packageAction, name)
+	command := fmt.Sprintf("sudo -E yum -y %s %s", packageAction, name)
 
 	if _, err := provisioner.SSHCommand(command); err != nil {
 		return err
@@ -130,30 +111,24 @@ func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOp
 	provisioner.AuthOptions = authOptions
 	provisioner.EngineOptions = engineOptions
 
-	// set default storage driver for redhat/fedora/etc. 
+	// set default storage driver for redhat & friends
 	if provisioner.EngineOptions.StorageDriver == "" {
 		provisioner.EngineOptions.StorageDriver = "devicemapper"
-	}
-
-	if err := provisioner.EnableIpForwarding(); err != nil {
-		log.Debug("Attempt to enable IP forwarding failed. Docker may not be reachable.")
 	}
 
 	if err := provisioner.SetHostname(provisioner.Driver.GetMachineName()); err != nil {
 		return err
 	}
 
-	if err := provisioner.CheckForSystemd(); err != nil {
-		return err
-	}
-
 	for _, pkg := range provisioner.Packages {
+		log.Debugf("installing base package: name=%s", pkg)
 		if err := provisioner.Package(pkg, pkgaction.Install); err != nil {
 			return err
 		}
 	}
 
-	if err := provisioner.InstallDocker(); err != nil {
+	// install docker
+	if err := installDocker(provisioner); err != nil {
 		return err
 	}
 
@@ -162,11 +137,6 @@ func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOp
 	}
 
 	if err := makeDockerOptionsDir(provisioner); err != nil {
-		return err
-	}
-
-	if err := provisioner.ClearConfigFile(); err != nil {
-		log.Debug("Failed to clear the existing config file")
 		return err
 	}
 
@@ -192,24 +162,35 @@ func (provisioner *RedhatFamilyProvisioner) Provision(swarmOptions swarm.SwarmOp
 
 func (provisioner *RedhatFamilyProvisioner) GenerateDockerOptions(dockerPort int) (*DockerOptions, error) {
 	var (
-		engineCfg bytes.Buffer
+		engineCfg  bytes.Buffer
+		configPath = provisioner.DaemonOptionsFile
 	)
 
-	if provisioner.rhpi != nil {
-		if err := provisioner.rhpi.PreGenerateDockerOptionsHook(); err != nil {
-			log.Debug("RedhatFamilyProvisioner.GenerateDockerOptions() -- PreGenerateDockerOptionsTasks failed.")
-			return nil, err
-		}
+	// remove existing
+	if _, err := provisioner.SSHCommand(fmt.Sprintf("sudo rm %s", configPath)); err != nil {
+		return nil, err
 	}
-	
+
 	driverNameLabel := fmt.Sprintf("provider=%s", provisioner.Driver.DriverName())
 	provisioner.EngineOptions.Labels = append(provisioner.EngineOptions.Labels, driverNameLabel)
 
-	engineConfigTmpl := `
-OPTIONS='--selinux-enabled -H tcp://0.0.0.0:{{.DockerPort}} -H unix:///var/run/docker.sock --storage-driver {{.EngineOptions.StorageDriver}} --tlsverify --tlscacert {{.AuthOptions.CaCertRemotePath}} --tlscert {{.AuthOptions.ServerCertRemotePath}} --tlskey {{.AuthOptions.ServerKeyRemotePath}} {{ range .EngineOptions.Labels }}--label {{.}} {{ end }}{{ range .EngineOptions.InsecureRegistry }}--insecure-registry {{.}} {{ end }}{{ range .EngineOptions.RegistryMirror }}--registry-mirror {{.}} {{ end }}{{ range .EngineOptions.ArbitraryFlags }}--{{.}} {{ end }}'
-DOCKER_CERT_PATH={{.DockerOptionsDir}}
-ADD_REGISTRY=''
-GOTRACEBACK='crash'
+	// systemd / redhat will not load options if they are on newlines
+	// instead, it just continues with a different set of options; yeah...
+	engineConfigTmpl := `[Unit]
+Description=Docker Application Container Engine
+Documentation=http://docs.docker.com
+After=network.target docker.socket
+Required=docker.socket
+
+[Service]
+ExecStart=/usr/bin/docker -d -H tcp://0.0.0.0:{{.DockerPort}} -H unix:///var/run/docker.sock --storage-driver {{.EngineOptions.StorageDriver}} --tlsverify --tlscacert {{.AuthOptions.CaCertRemotePath}} --tlscert {{.AuthOptions.ServerCertRemotePath}} --tlskey {{.AuthOptions.ServerKeyRemotePath}} {{ range .EngineOptions.Labels }}--label {{.}} {{ end }}{{ range .EngineOptions.InsecureRegistry }}--insecure-registry {{.}} {{ end }}{{ range .EngineOptions.RegistryMirror }}--registry-mirror {{.}} {{ end }}{{ range .EngineOptions.ArbitraryFlags }}--{{.}} {{ end }}
+MountFlags=slave
+LimitNOFILE=1048576
+LimitNPROC=1048576
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
 `
 	t, err := template.New("engineConfig").Parse(engineConfigTmpl)
 	if err != nil {
@@ -224,98 +205,39 @@ GOTRACEBACK='crash'
 	}
 
 	t.Execute(&engineCfg, engineConfigContext)
-	
-	if provisioner.rhpi != nil {
-		if err := provisioner.rhpi.PostGenerateDockerOptionsHook(); err != nil {
-			log.Debug("RedhatFamilyProvisioner.GenerateDockerOptions() -- PostGenerateDockerOptionsTasks failed.")
-			return nil, err
-		}
-	}
-	
+
+	daemonOptsDir := configPath
 	return &DockerOptions{
 		EngineOptions:     engineCfg.String(),
-		EngineOptionsPath: provisioner.DaemonOptionsFile,
+		EngineOptionsPath: daemonOptsDir,
 	}, nil
 }
 
 
 /* Methods common to all redhat-family distributions */
-
-func (provisioner *RedhatFamilyProvisioner) InstallDocker() error {
-	if err := provisioner.Package(provisioner.DockerPackageName, pkgaction.Install); err != nil {
+func installDocker(provisioner *RedhatFamilyProvisioner) error {
+	if err := provisioner.installOfficialDocker(); err != nil {
 		return err
 	}
 
-	if err := provisioner.Service(provisioner.DockerServiceName, pkgaction.Restart); err != nil {
+	if err := provisioner.Service("docker", pkgaction.Restart); err != nil {
 		return err
 	}
 
-	if err := provisioner.Service(provisioner.DockerServiceName, pkgaction.Enable); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (provisioner *RedhatFamilyProvisioner) CheckForSystemd() error {
-	var (
-		command 	string
-		reader		bytes.Buffer
-	)
-
-	// Test for sysvint or something else (i.e. systemd on redhat/fedora)
-	command = "pidof /sbin/init &>/dev/null && echo sysvinit || echo systemd" 
-	response, err := provisioner.SSHCommand(command)
-	if err != nil {
-		return err
-	}
-	
-	if _, err := reader.ReadFrom(response.Stdout); err != nil {
-		return err
-	}
-	
-	result := reader.String()
-	if strings.TrimSpace(result) == "systemd" {
-		provisioner.SystemdEnabled = true
-	} else {
-		provisioner.SystemdEnabled = false
-	}
-
-	return nil
-}
-
-func (provisioner *RedhatFamilyProvisioner ) ClearConfigFile() error {
-	var command string
-	
-	//command = fmt.Sprintf("sudo sh -c ': > %s'", provisioner.DaemonOptionsFile)
-	command = fmt.Sprintf("sudo rm -f %s", provisioner.DaemonOptionsFile)
-	if _, err := provisioner.SSHCommand(command); err != nil {
-		log.Debug("Failed to run SSH command to clear existing config file")
+	if err := provisioner.Service("docker", pkgaction.Enable); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (provisioner *RedhatFamilyProvisioner) EnableIpForwarding() error {
-	var command string
-	
-	// TODO: Is this in effect the same as passing docker-machine the --ip-forward=true flag? 
-	
-	// Command to enable IP forwarding 
-	command = "sudo sysctl -w net.ipv4.ip_forward=1"
-	if _, err := provisioner.SSHCommand(command); err != nil {
-		log.Debug("Failed to run SSH command to enable ip forwarding to docker containers")
+func (provisioner *RedhatFamilyProvisioner) installOfficialDocker() error {
+	log.Debug("installing docker")
+
+	if _, err := provisioner.SSHCommand(fmt.Sprintf("sudo yum install -y --nogpgcheck  %s", provisioner.DockerRPMPath)); err != nil {
 		return err
 	}
-	
-	// Command to persist enablement of IP forwarding between boots
-	command = fmt.Sprintf("sudo sh -c 'echo net.ipv4.ip_forward = 1 >> %s'", provisioner.DockerSysctlFile)
-	if _, err := provisioner.SSHCommand(command); err != nil {
-		log.Debug("Failed to run SSH command to make ip forwarding to docker containers permanent")
-		return err
-	}
-	
+
 	return nil
 }
 
